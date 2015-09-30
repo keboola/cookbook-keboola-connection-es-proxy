@@ -1,0 +1,339 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Keboola Connection Elasticsearch Proxy Server",
+    "Parameters": {
+        "InstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [ "t2.micro", "m1.small", "m1.medium", "m3.medium", "m3.large", "c3.large", "c3.xlarge", "m1.large", "m1.xlarge", "m3.xlarge", "m3.2xlarge", "m2.xlarge", "m2.2xlarge", "m2.4xlarge", "c1.medium", "c1.xlarge", "cc1.4xlarge", "cc2.8xlarge", "cg1.4xlarge", "hi1.4xlarge", "hs1.8xlarge"],
+            "ConstraintDescription": "must be a valid EC2 instance type."
+        },
+        "ProxyPassword": {
+          "Description": "Password which will be requested by proxy. Use some password generator.",
+          "Type": "String"
+        },
+       "SecurityGroupId": {
+            "Description": "Security Group id",
+            "Type": "String",
+            "Default": "sg-302fc256"
+        },
+       "SubnetId": {
+            "Description": "Subnet id",
+            "Type": "String",
+            "Default": "subnet-9cdbf3e8"
+        }
+    },
+    "Mappings": {
+        "AWSInstanceType2Arch": {
+            "t2.micro": {
+                "Arch": "EBS64"
+            },
+            "m1.small": {
+                "Arch": "PV64"
+            },
+            "m1.medium": {
+                "Arch": "PV64"
+            },
+            "m3.medium": {
+                "Arch": "PV64"
+            },
+            "m3.large": {
+                "Arch": "PV64"
+            },
+            "m1.large": {
+                "Arch": "PV64"
+            },
+            "m1.xlarge": {
+                "Arch": "PV64"
+            },
+            "m3.xlarge": {
+                "Arch": "PV64"
+            },
+            "m3.2xlarge": {
+                "Arch": "PV64"
+            },
+            "m2.xlarge": {
+                "Arch": "PV64"
+            },
+            "m2.2xlarge": {
+                "Arch": "PV64"
+            },
+            "m2.4xlarge": {
+                "Arch": "PV64"
+            },
+            "c1.medium": {
+                "Arch": "PV64"
+            },
+            "c1.xlarge": {
+                "Arch": "PV64"
+            },
+            "c3.large": {
+                "Arch": "PV64"
+            },
+            "c3.xlarge": {
+                "Arch": "PV64"
+            },
+            "cc1.4xlarge": {
+                "Arch": "CLU64"
+            },
+            "cc2.8xlarge": {
+                "Arch": "CLU64"
+            },
+            "cg1.4xlarge": {
+                "Arch": "GPU64"
+            },
+            "hi1.4xlarge": {
+                "Arch": "PV64"
+            },
+            "hs1.8xlarge": {
+                "Arch": "PV64"
+            }
+        },
+        "AWSRegionArch2AMI": {
+            "us-east-1": {
+                "PV64": "ami-28cae740",
+                "EBS64": "ami-1ecae776"
+            },
+            "eu-west-1": {
+                "PV64": "ami-6e7bd919"
+            }
+        }
+    },
+    "Resources": {
+
+        "CfnUser": {
+            "Type": "AWS::IAM::User",
+            "Properties": {
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "root",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Sid": "Stmt1329997232569xk",
+                                    "Action": [
+                                        "s3:GetObject"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": [
+                                        "arn:aws:s3:::keboola-configs/certificates/*",
+                                        "arn:aws:s3:::keboola-configs/servers/*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+
+
+        "HostKeys": {
+            "Type": "AWS::IAM::AccessKey",
+            "Properties": {
+                "UserName": {
+                    "Ref": "CfnUser"
+                }
+            }
+        },
+
+        "Ec2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Metadata": {
+                "AWS::CloudFormation::Authentication" : {
+                    "S3AccessCredentials" : {
+                        "type" : "S3",
+                        "accessKeyId" : { "Ref" : "HostKeys" },
+                        "secretKey" : { "Fn::GetAtt": [ "HostKeys", "SecretAccessKey" ] }
+                    }
+                },
+                "AWS::CloudFormation::Init": {
+                    "config": {
+                        "packages": {
+                            "yum": {
+                                "git": []
+                            }
+                        },
+                        "files": {
+                            "/var/chef/environments/production.json": {
+                                "source": "https://s3.amazonaws.com/keboola-configs/servers/environments/production.json",
+                                "authentication": "S3AccessCredentials",
+                                "owner": "root",
+                                "group": "root"
+                            },
+                            "/var/init/node.json": {
+                                "content": {
+                                    "run_list": [ "recipe[keboola-connection-es-proxy]" ],
+                                    "aws": {
+                                        "aws_access_key_id": {
+                                            "Ref": "HostKeys"
+                                        },
+                                        "aws_secret_access_key": {
+                                            "Fn::GetAtt": [ "HostKeys", "SecretAccessKey" ]
+                                        }
+
+                                    },
+                                    "keboola-connection-es-proxy": {
+                                      "password": {
+                                          "Ref": "ProxyPassword"
+                                      }
+                                    }
+                                },
+                                "mode": "000644",
+                                "owner": "root",
+                                "group": "wheel"
+                            },
+                            "/var/init/solo.rb" : {
+                                "content" : { "Fn::Join" : ["\n", [
+                                    "log_level :info",
+                                    "log_location STDOUT",
+                                    "cookbook_path [\"/var/chef/berks-cookbooks\"]",
+                                    "environment_path \"/var/chef/environments\""
+                                ]] },
+                                "mode" : "000644",
+                                "owner" : "root",
+                                "group" : "wheel"
+                            },
+                            "/var/init/bootstrap.sh": {
+                                "content": {
+                                    "Fn::Join": ["\n", [
+                                        "curl -# -L -k -o /tmp/cookbook-keboola-connection-es-proxy.tar.gz https://github.com/keboola/cookbook-keboola-connection-es-proxy/archive/master.tar.gz",
+                                        "curl -L \"https://packagecloud.io/chef/stable/download?distro=6&filename=chefdk-0.2.2-1.x86_64.rpm\" > /tmp/chefdk.rpm",
+                                        "rpm -i /tmp/chefdk.rpm",
+                                        "mkdir -p /var/chef/cookbooks/keboola-connection-es-proxy",
+                                        "tar --strip 1 -C /var/chef/cookbooks/keboola-connection-es-proxy -xf /tmp/cookbook-keboola-connection-es-proxy.tar.gz",
+                                        "export HOME=/root",
+                                        "cd /var/chef/cookbooks/keboola-connection-es-proxy && /usr/bin/berks vendor /var/chef/berks-cookbooks/"
+                                    ]]
+                                },
+                                "mode": "000644",
+                                "owner": "root",
+                                "group": "wheel"
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Ref": "AWS::StackName"
+                        }
+                    }
+                ],
+                "ImageId": {
+                    "Fn::FindInMap": [ "AWSRegionArch2AMI", {
+                        "Ref": "AWS::Region"
+                    },
+                        {
+                            "Fn::FindInMap": [ "AWSInstanceType2Arch", {
+                                "Ref": "InstanceType"
+                            }, "Arch" ]
+                        } ]
+                },
+                "InstanceType": {
+                    "Ref": "InstanceType"
+                },
+                "BlockDeviceMappings": [
+
+                ],
+                "NetworkInterfaces": [
+                    {
+                        "GroupSet": [{"Ref": "SecurityGroupId"}],
+                        "AssociatePublicIpAddress": "true",
+                        "DeviceIndex": "0",
+                        "DeleteOnTermination": "true",
+                        "SubnetId": {"Ref": "SubnetId"}
+                    }
+                ],
+                "KeyName": "Martin",
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": ["", [
+                            "#!/bin/bash\n",
+                            "yum update -y aws-cfn-bootstrap\n",
+                            "yum update -y\n",
+
+                            "function error_exit\n",
+                            "{\n",
+                            "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", {
+                                "Ref": "WaitHandle"
+                            }, "'\n",
+                            "  exit 1\n",
+                            "}\n",
+
+                            "/opt/aws/bin/cfn-init -s ", {
+                                "Ref": "AWS::StackName"
+                            }, " -r Ec2Instance ",
+                            "         --region ", {
+                                "Ref": "AWS::Region"
+                            }, " || error_exit 'Failed to initialize Chef Solo'\n",
+                            "bash /var/init/bootstrap.sh > /var/init/bootstrap.log 2>&1\n",
+                            "export HOME=/root\n",
+                            "chef-solo --environment production -j /var/init/node.json --config /var/init/solo.rb --node-name ",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            " > /var/init/chef_solo.log 2>&1\n",
+                            "/opt/aws/bin/cfn-signal -e $? '", {
+                                "Ref": "WaitHandle"
+                            }, "'\n"
+                        ]]
+                    }
+                }
+
+            }
+
+        },
+
+        "publicDNS": {
+            "Type": "AWS::Route53::RecordSet",
+            "Properties": {
+                "HostedZoneName": "keboola.com.",
+                "Comment": "DNS name for instance.",
+                "Name": {
+                    "Fn::Join": [ "", [
+                        {
+                            "Ref": "AWS::StackName"
+                        },
+                        ".keboola.com"
+                    ] ]
+                },
+                "Type": "A",
+                "TTL": "900",
+                "ResourceRecords": [
+                    {
+                        "Fn::GetAtt": [ "Ec2Instance", "PublicIp" ]
+                    }
+                ]
+            }
+        },
+
+        "WaitHandle": {
+            "Type": "AWS::CloudFormation::WaitConditionHandle"
+        },
+
+        "WaitCondition": {
+            "Type": "AWS::CloudFormation::WaitCondition",
+            "DependsOn": "Ec2Instance",
+            "Properties": {
+                "Handle": {
+                    "Ref": "WaitHandle"
+                },
+                "Timeout": "1800"
+            }
+        }
+    },
+    "Outputs": {
+        "Instance": {
+            "Value": {
+                "Fn::GetAtt": [ "Ec2Instance", "PublicDnsName" ]
+            },
+            "Description": "DNS Name of the newly created EC2 instance"
+        }
+    }
+}
