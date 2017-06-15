@@ -15,3 +15,10 @@ web_app "#{node['fqdn']}" do
   server_aliases [node['hostname'], 'connection-es-proxy.keboola.com']
   enable true
 end
+
+web_app "#{node['fqdn']}" do
+  template "aws-es-proxy.conf.erb"
+  server_name 'connection-aws-es-proxy.keboola.com'
+  server_aliases ['connection-aws-es-proxy.keboola.com']
+  enable true
+end
